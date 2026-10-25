@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>ClipGlot</title>
+	<link rel="stylesheet" href="style.css">
+</head>
+<body>
+	<div id="app">
+		<header>
+			<div class="brand"><span class="logo">译</span>ClipGlot</div>
+			<div class="header-right">
+				<label for="targetLang" class="target-label">译为</label>
+				<select id="targetLang"></select>
+				<button id="btnTheme" class="icon-btn" title="主题：跟随系统（点击切换）">◐</button>
+				<button id="btnSettings" class="icon-btn" title="设置 AI 服务">⚙</button>
+			</div>
+		</header>
+
+		<main>
+			<section class="pane source-pane">
+				<div class="pane-head">
+					<span class="pane-title">原文</span>
+					<span id="detected" class="badge" hidden></span>
+				</div>
+				<textarea id="source" placeholder="输入要翻译的内容…（停止输入后自动翻译）" spellcheck="false"></textarea>
+				<div class="pane-foot">
+					<span id="charCount">0 字符</span>
+					<span class="foot-actions">
+						<button id="btnClear" class="ghost-btn">清空</button>
+						<button id="btnTranslate" class="primary-btn">翻译<kbd>Ctrl+↵</kbd></button>
+					</span>
+				</div>
+			</section>
+
+			<section class="pane result-pane" id="results"></section>
+		</main>
+	</div>
+
+	<div id="settingsOverlay" class="overlay" hidden>
+		<div class="modal">
+			<div class="modal-head">
+				<span>设置 · AI 服务</span>
+				<button id="btnCloseSettings" class="icon-btn" title="关闭">✕</button>
+			</div>
+			<div class="modal-body" id="settingsBody">
+				<div id="presetList"></div>
+				<div class="section-title">
+					<span>自定义 OpenAI 兼容服务</span>
+					<button id="btnAddCustom" class="ghost-btn">＋ 添加</button>
+				</div>
+				<div id="customList"></div>
+				<div class="section-title"><span>划词翻译</span></div>
+				<div class="hotkey-row">
+					<label class="switch" title="启用划词翻译">
+						<input type="checkbox" id="hotkeyOn" checked>
+						<span class="slider"></span>
+					</label>
+					<button id="hotkeyBox" class="hotkey-box" type="button" title="点击后按下新的组合键"></button>
+					<span class="hotkey-tip">在任意程序中划选文字后按此快捷键，自动复制所选内容并翻译</span>
+				</div>
+				<div class="tip">快捷键为系统级占用，可能与个别软件冲突；点击组合键框可重新录制（Esc 取消）。</div>
+			</div>
+			<div class="modal-foot">
+				<span id="settingsMsg" class="settings-error"></span>
+				<button id="btnCancelSettings" class="ghost-btn">取消</button>
+				<button id="btnSaveSettings" class="primary-btn">保存</button>
+			</div>
+		</div>
+	</div>
+
+	<script src="app.js"></script>
+</body>
+</html>

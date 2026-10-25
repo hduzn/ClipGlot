@@ -23,13 +23,16 @@ type ProviderConfig struct {
 type Config struct {
 	Providers  []ProviderConfig `json:"providers"`
 	TargetLang string           `json:"targetLang"`
-	Theme      string           `json:"theme"` // "system" | "light" | "dark"
+	Theme      string           `json:"theme"`  // "system" | "light" | "dark"
+	Hotkey     string           `json:"hotkey"` // 划词翻译全局快捷键，如 "Ctrl+Shift+Space"
+	HotkeyOff  bool             `json:"hotkeyOff"`
 }
 
 func DefaultConfig() *Config {
 	return &Config{
 		TargetLang: "en",
 		Theme:      "system",
+		Hotkey:     "Ctrl+Shift+Space",
 		Providers: []ProviderConfig{
 			{ID: "bailian", Type: "preset", Name: "阿里云百炼", BaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1", Model: "qwen-mt-flash"},
 			{ID: "deepseek", Type: "preset", Name: "DeepSeek", BaseURL: "https://api.deepseek.com/v1", Model: "deepseek-flash"},
@@ -87,6 +90,10 @@ func applySaved(cfg *Config, saved Config) {
 	if saved.Theme != "" {
 		cfg.Theme = saved.Theme
 	}
+	if saved.Hotkey != "" {
+		cfg.Hotkey = saved.Hotkey
+	}
+	cfg.HotkeyOff = saved.HotkeyOff
 	var customs []ProviderConfig
 	for _, p := range saved.Providers {
 		if p.Type == "custom" {

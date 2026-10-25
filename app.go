@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/options"
@@ -27,9 +28,10 @@ type App struct {
 	ctx    context.Context
 	config *Config
 
-	mu     sync.Mutex
-	seq    int                // 翻译轮次号，旧轮次的事件会被前端丢弃
-	cancel context.CancelFunc // 取消进行中的翻译
+	mu        sync.Mutex
+	seq       int                // 翻译轮次号，旧轮次的事件会被前端丢弃
+	cancel    context.CancelFunc // 取消进行中的翻译
+	hotkeyWnd atomic.Uintptr     // 划词热键 message-only 窗口（watcher 线程创建）
 }
 
 func NewApp() *App { return &App{} }
@@ -37,6 +39,7 @@ func NewApp() *App { return &App{} }
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.config = LoadConfig()
+	go a.startHotkeyWatcher()
 }
 
 // onSecondInstance 再次启动时把已有窗口带到前台。
@@ -71,7 +74,9 @@ func (a *App) SaveConfig(cfg Config) (*Config, error) {
 	if cfg.TargetLang == "" {
 		cfg.TargetLang = "en"
 	}
+	cfg.Hotkey = strings.TrimSpace(cfg.Hotkey)
 	a.config = &cfg
+	a.applyHotkey() // 快捷键可能被修改，按新配置重新注册
 	if err := saveConfigFile(a.config); err != nil {
 		return a.config, err
 	}
