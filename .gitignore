@@ -1,0 +1,6 @@
+build/bin/
+release/
+config.json
+*.tmp
+frontend/dist/
+frontend/wailsjs/

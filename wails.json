@@ -1,0 +1,14 @@
+{
+	"$schema": "https://wails.io/schemas/config.v2.json",
+	"name": "ClipGlot",
+	"outputfilename": "ClipGlot",
+	"frontend:install": "",
+	"frontend:build": "",
+	"frontend:dir": "frontend",
+	"info": {
+		"productName": "ClipGlot",
+		"productVersion": "1.0.0",
+		"copyright": "Copyright © 2026",
+		"comments": "轻巧的 AI 桌面翻译工具"
+	}
+}
