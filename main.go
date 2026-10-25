@@ -29,6 +29,8 @@ func main() {
 		Bind:             []interface{}{app},
 		// 允许输入框右键粘贴/复制
 		EnableDefaultContextMenu: true,
+		// 关闭窗口即隐藏到托盘；退出走托盘右键菜单
+		HideWindowOnClose: true,
 		SingleInstanceLock: &options.SingleInstanceLock{
 			UniqueId:               "clipglot-6f3c-4a1e-9d2b-8e5f1a7c0d94",
 			OnSecondInstanceLaunch: app.onSecondInstance,

@@ -333,7 +333,7 @@ function openSettings() {
 	editCfg = JSON.parse(JSON.stringify(cfg));
 	renderSettings();
 	$("#hotkeyOn").checked = !editCfg.hotkeyOff;
-	$("#hotkeyBox").textContent = editCfg.hotkey || "Ctrl+Shift+Space";
+	$("#hotkeyBox").textContent = editCfg.hotkey || "Alt+T";
 	$("#hotkeyBox").classList.toggle("off", !!editCfg.hotkeyOff);
 	$("#settingsMsg").textContent = "";
 	$("#settingsOverlay").hidden = false;
@@ -455,7 +455,7 @@ function collectSettings() {
 	return {
 		providers,
 		targetLang: cfg.targetLang || "en",
-		hotkey: editCfg.hotkey || "Ctrl+Shift+Space",
+		hotkey: editCfg.hotkey || "Alt+T",
 		hotkeyOff: !$("#hotkeyOn").checked,
 	};
 }
@@ -507,7 +507,7 @@ function endHotkeyCapture() {
 	capturingHotkey = false;
 	const el = $("#hotkeyBox");
 	el.classList.remove("capturing");
-	el.textContent = editCfg.hotkey || "Ctrl+Shift+Space";
+	el.textContent = editCfg.hotkey || "Alt+T";
 }
 
 // comboFromEvent 把按键事件转成 "Ctrl+Shift+T" 形式的组合键字符串，

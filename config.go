@@ -32,7 +32,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		TargetLang: "en",
 		Theme:      "system",
-		Hotkey:     "Ctrl+Shift+Space",
+		Hotkey:     "Alt+T",
 		Providers: []ProviderConfig{
 			{ID: "bailian", Type: "preset", Name: "阿里云百炼", BaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1", Model: "qwen-mt-flash"},
 			{ID: "deepseek", Type: "preset", Name: "DeepSeek", BaseURL: "https://api.deepseek.com/v1", Model: "deepseek-flash"},

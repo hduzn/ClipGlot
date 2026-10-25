@@ -31,7 +31,9 @@ type App struct {
 	mu        sync.Mutex
 	seq       int                // 翻译轮次号，旧轮次的事件会被前端丢弃
 	cancel    context.CancelFunc // 取消进行中的翻译
-	hotkeyWnd atomic.Uintptr     // 划词热键 message-only 窗口（watcher 线程创建）
+	hotkeyWnd atomic.Uintptr     // 托盘/热键的隐藏窗口（watcher 线程创建）
+	trayMenu  uintptr            // 托盘右键菜单句柄（仅 watcher 线程访问）
+	trayIcon  uintptr            // 托盘图标句柄（仅 watcher 线程访问）
 }
 
 func NewApp() *App { return &App{} }
@@ -42,10 +44,15 @@ func (a *App) startup(ctx context.Context) {
 	go a.startHotkeyWatcher()
 }
 
-// onSecondInstance 再次启动时把已有窗口带到前台。
-func (a *App) onSecondInstance(_ options.SecondInstanceData) {
+// showWindow 唤起主窗口：从托盘/最小化状态恢复并置前。
+func (a *App) showWindow() {
 	runtime.WindowUnminimise(a.ctx)
 	runtime.WindowShow(a.ctx)
+}
+
+// onSecondInstance 再次启动时把已有窗口带到前台。
+func (a *App) onSecondInstance(_ options.SecondInstanceData) {
+	a.showWindow()
 }
 
 // GetConfig 返回完整配置（本地应用，含 API Key）。
