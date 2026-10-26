@@ -347,3 +347,6 @@ select, .field input {
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 ::-webkit-scrollbar-track { background: transparent; }
+
+.hotkey-box.static { cursor: default; min-width: 0; }
+.hotkey-box.static:hover { border-color: var(--border); color: var(--text); }

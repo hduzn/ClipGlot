@@ -28,11 +28,12 @@ const (
 
 // Config 是应用的全部持久化状态。
 type Config struct {
-	Providers  []ProviderConfig `json:"providers"`
-	TargetLang string           `json:"targetLang"`
-	Theme      string           `json:"theme"`  // "system" | "light" | "dark"
-	Hotkey     string           `json:"hotkey"` // 划词翻译全局快捷键，如 "Ctrl+Shift+Space"
-	HotkeyOff  bool             `json:"hotkeyOff"`
+	Providers     []ProviderConfig `json:"providers"`
+	TargetLang    string           `json:"targetLang"`
+	Theme         string           `json:"theme"`  // "system" | "light" | "dark"
+	Hotkey        string           `json:"hotkey"` // 划词翻译全局快捷键，如 "Ctrl+Shift+Space"
+	HotkeyOff     bool             `json:"hotkeyOff"`
+	DoubleCopyOff bool             `json:"doubleCopyOff"` // 双击 Ctrl+C 触发划词翻译，默认开
 }
 
 func DefaultConfig() *Config {
@@ -112,6 +113,7 @@ func applySaved(cfg *Config, saved Config) {
 		cfg.Hotkey = saved.Hotkey
 	}
 	cfg.HotkeyOff = saved.HotkeyOff
+	cfg.DoubleCopyOff = saved.DoubleCopyOff
 	var customs []ProviderConfig
 	for _, p := range saved.Providers {
 		if p.Type == "custom" {

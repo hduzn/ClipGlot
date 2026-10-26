@@ -27,6 +27,16 @@ const (
 	trayCmdShow = 1
 	trayCmdQuit = 2
 
+	whKeyboardLl  = 13 // WH_KEYBOARD_LL：双击 Ctrl+C 手势用的低级键盘钩子
+	wmKeyDown     = 0x0100
+	wmKeyUp       = 0x0101
+	wmSysKeyDown  = 0x0104
+	wmSysKeyUp    = 0x0105
+	llkhfInjected = 0x10 // LLKHF_INJECTED：SendInput 等注入的按键
+	vkKeyC        = 0x43
+	vkLControl    = 0xA2
+	vkRControl    = 0xA3
+
 	nimAdd    = 0
 	nimModify = 1
 	nimDelete = 2
@@ -49,6 +59,8 @@ var (
 	procRegisterHotKey         = user32.NewProc("RegisterHotKey")
 	procUnregisterHotKey       = user32.NewProc("UnregisterHotKey")
 	procRegisterWindowMessageW = user32.NewProc("RegisterWindowMessageW")
+	procSetWindowsHookExW      = user32.NewProc("SetWindowsHookExW")
+	procCallNextHookEx         = user32.NewProc("CallNextHookEx")
 	procGetModuleHandleW       = kernel32.NewProc("GetModuleHandleW")
 	procGetModuleFileNameW     = kernel32.NewProc("GetModuleFileNameW")
 
@@ -125,6 +137,26 @@ type msg struct {
 	_       uint32
 }
 
+// kbdllHookStruct 对应 Win32 KBDLLHOOKSTRUCT（x64 共 24 字节）。
+type kbdllHookStruct struct {
+	vkCode   uint32
+	scanCode uint32
+	flags    uint32
+	time     uint32
+	extra    uintptr
+}
+
+// hookProcPtr 低级键盘钩子：只做“双击 Ctrl+C”手势识别，极轻量、永不吞键。
+var hookProcPtr = syscall.NewCallback(func(nCode, wParam, lParam uintptr) uintptr {
+	if nCode >= 0 {
+		if a := appRef.Load(); a != nil {
+			a.hookKey(uint32(wParam), (*kbdllHookStruct)(ptrTo(lParam)))
+		}
+	}
+	r, _, _ := procCallNextHookEx.Call(0, nCode, wParam, lParam)
+	return r
+})
+
 // wndClassEx 对应 Win32 WNDCLASSEXW 结构。
 type wndClassEx struct {
 	cbSize        uint32
@@ -175,6 +207,7 @@ func (a *App) startHotkeyWatcher() {
 	a.reghotkey()
 	a.trayMenu = createTrayMenu()
 	a.addTrayIcon(hwnd, nimAdd)
+	a.installDoubleCopyHook(hInstance)
 	go a.hideOnMinimise()
 
 	var m msg
@@ -196,14 +229,66 @@ func (a *App) reghotkey() {
 	}
 	procUnregisterHotKey.Call(hwnd, hotkeyID)
 	a.mu.Lock()
-	combo, off := a.config.Hotkey, a.config.HotkeyOff
+	combo, off, doubleOff := a.config.Hotkey, a.config.HotkeyOff, a.config.DoubleCopyOff
 	a.mu.Unlock()
+	a.doubleCopyOff.Store(doubleOff)
 	if !off {
 		if mod, vk, ok := parseHotkey(combo); ok {
 			procRegisterHotKey.Call(hwnd, hotkeyID, uintptr(mod), uintptr(vk))
 		}
 	}
 	a.addTrayIcon(hwnd, nimModify)
+}
+
+// installDoubleCopyHook 装低级键盘钩子，识别“双击 Ctrl+C”手势。
+// 回调运行在 watcher 线程的消息循环里，只记状态和发消息，不吞任何键。
+func (a *App) installDoubleCopyHook(hInstance uintptr) {
+	procSetWindowsHookExW.Call(whKeyboardLl, hookProcPtr, hInstance, 0)
+}
+
+// hookKey 识别“双击 Ctrl+C”：500ms 内按住 Ctrl 连按两次 C，中间没碰过别的键。
+// 识别到后发一条 wmHotkey 复用现有翻译流程；所有按键原样放行，正常 Ctrl+C
+// 不受影响；按住 C 产生的自动重复不算第二击。
+func (a *App) hookKey(msg uint32, k *kbdllHookStruct) {
+	if a.doubleCopyOff.Load() || k.flags&llkhfInjected != 0 {
+		return // 功能关闭；忽略 SendInput 等注入的按键，避免自触发
+	}
+	isCtrl := k.vkCode == vkLControl || k.vkCode == vkRControl
+	switch msg {
+	case wmKeyDown, wmSysKeyDown:
+		if isCtrl {
+			a.dcCtrlDown = true
+			return
+		}
+		if k.vkCode == vkKeyC {
+			if a.dcCDown { // 按住不放产生的自动重复
+				return
+			}
+			a.dcCDown = true
+			if !a.dcCtrlDown {
+				a.dcLastC = time.Time{} // 不带 Ctrl 的 C 不构成手势
+				return
+			}
+			now := time.Now()
+			if !a.dcLastC.IsZero() && now.Sub(a.dcLastC) < 500*time.Millisecond {
+				a.dcLastC = time.Time{}
+				if hwnd := a.hotkeyWnd.Load(); hwnd != 0 {
+					procPostMessageW.Call(hwnd, wmHotkey, 0, 0) // 双击！触发翻译
+				}
+				return
+			}
+			a.dcLastC = now
+			return
+		}
+		a.dcLastC = time.Time{} // 两次 C 之间按了别的键，序列作废
+	case wmKeyUp, wmSysKeyUp:
+		if isCtrl {
+			a.dcCtrlDown = false
+		}
+		if k.vkCode == vkKeyC {
+			a.dcCDown = false
+		}
+	}
 }
 
 // notifyIconData 对应 Win32 NOTIFYICONDATAW 结构（x64 共 984 字节）。
@@ -241,8 +326,15 @@ func (a *App) addTrayIcon(hwnd uintptr, op uint32) {
 	}
 	a.mu.Lock()
 	tip := "ClipGlot"
+	var triggers []string
 	if !a.config.HotkeyOff {
-		tip = "ClipGlot · " + a.config.Hotkey + " 划词翻译"
+		triggers = append(triggers, a.config.Hotkey)
+	}
+	if !a.config.DoubleCopyOff {
+		triggers = append(triggers, "双击 Ctrl+C")
+	}
+	if len(triggers) > 0 {
+		tip = "ClipGlot · " + strings.Join(triggers, " / ") + " 划词翻译"
 	}
 	a.mu.Unlock()
 

@@ -60,7 +60,15 @@
 					<button id="hotkeyBox" class="hotkey-box" type="button" title="点击后按下新的组合键"></button>
 					<span class="hotkey-tip">在任意程序中划选文字后按此快捷键，自动复制所选内容并翻译</span>
 				</div>
-				<div class="tip">快捷键为系统级占用，可能与个别软件冲突；点击组合键框可重新录制（Esc 取消）。</div>
+				<div class="hotkey-row">
+					<label class="switch" title="启用双击 Ctrl+C 划词翻译">
+						<input type="checkbox" id="doubleCopyOn" checked>
+						<span class="slider"></span>
+					</label>
+					<span class="hotkey-box static">双击 Ctrl+C</span>
+					<span class="hotkey-tip">划选文字后照常 Ctrl+C 复制，半秒内再按一次 Ctrl+C 立即翻译</span>
+				</div>
+				<div class="tip">组合键为系统级占用；含 Ctrl+Shift 的组合按下瞬间会触发系统“切换输入法”，含 Alt 的组合易致修饰键状态错乱，均不建议。</div>
 			</div>
 			<div class="modal-foot">
 				<span id="settingsMsg" class="settings-error"></span>

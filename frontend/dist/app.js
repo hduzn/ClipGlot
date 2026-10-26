@@ -335,6 +335,7 @@ function openSettings() {
 	$("#hotkeyOn").checked = !editCfg.hotkeyOff;
 	$("#hotkeyBox").textContent = editCfg.hotkey || "Ctrl+Shift+Space";
 	$("#hotkeyBox").classList.toggle("off", !!editCfg.hotkeyOff);
+	$("#doubleCopyOn").checked = !editCfg.doubleCopyOff;
 	$("#settingsMsg").textContent = "";
 	$("#settingsOverlay").hidden = false;
 }
@@ -457,6 +458,7 @@ function collectSettings() {
 		targetLang: cfg.targetLang || "en",
 		hotkey: editCfg.hotkey || "Ctrl+Shift+Space",
 		hotkeyOff: !$("#hotkeyOn").checked,
+		doubleCopyOff: !$("#doubleCopyOn").checked,
 	};
 }
 

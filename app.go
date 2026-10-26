@@ -34,6 +34,13 @@ type App struct {
 	hotkeyWnd atomic.Uintptr     // 托盘/热键的隐藏窗口（watcher 线程创建）
 	trayMenu  uintptr            // 托盘右键菜单句柄（仅 watcher 线程访问）
 	trayIcon  uintptr            // 托盘图标句柄（仅 watcher 线程访问）
+
+	// 双击 Ctrl+C 手势：键盘钩子回调发生在 watcher 线程的消息循环里，
+	// 与 wndproc 同线程串行，以下字段无需加锁
+	doubleCopyOff atomic.Bool
+	dcCtrlDown    bool
+	dcCDown       bool
+	dcLastC       time.Time
 }
 
 func NewApp() *App { return &App{} }
