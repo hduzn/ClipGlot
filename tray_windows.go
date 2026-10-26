@@ -34,6 +34,7 @@ const (
 	wmSysKeyUp    = 0x0105
 	llkhfInjected = 0x10 // LLKHF_INJECTED：SendInput 等注入的按键
 	vkKeyC        = 0x43
+	vkControl     = 0x11 // 通用 Ctrl（不分左右），GetAsyncKeyState 查实时键态用
 	vkLControl    = 0xA2
 	vkRControl    = 0xA3
 
@@ -78,12 +79,16 @@ var (
 	procCreatePopupMenu  = user32.NewProc("CreatePopupMenu")
 	procAppendMenuW      = user32.NewProc("AppendMenuW")
 	procTrackPopupMenuEx = user32.NewProc("TrackPopupMenuEx")
-	procGetCursorPos     = user32.NewProc("GetCursorPos")
-	procSetForegroundWin = user32.NewProc("SetForegroundWindow")
-	procFindWindowW      = user32.NewProc("FindWindowW")
-	procIsIconic         = user32.NewProc("IsIconic")
-	procShowWindow       = user32.NewProc("ShowWindow")
-	procLoadIconW        = user32.NewProc("LoadIconW")
+	procGetCursorPos          = user32.NewProc("GetCursorPos")
+	procSetForegroundWin      = user32.NewProc("SetForegroundWindow")
+	procGetForegroundWindow   = user32.NewProc("GetForegroundWindow")
+	procGetWindowThreadProcID = user32.NewProc("GetWindowThreadProcessId")
+	procAttachThreadInput     = user32.NewProc("AttachThreadInput")
+	procFindWindowW           = user32.NewProc("FindWindowW")
+	procIsIconic              = user32.NewProc("IsIconic")
+	procShowWindow            = user32.NewProc("ShowWindow")
+	procLoadIconW             = user32.NewProc("LoadIconW")
+	procGetCurrentThreadId    = kernel32.NewProc("GetCurrentThreadId")
 )
 
 var (
@@ -93,7 +98,10 @@ var (
 		if a := appRef.Load(); a != nil {
 			switch msg {
 			case wmHotkey:
-				a.onHotkey()
+				// lParam 携带钩子在手势识别瞬间记录的剪贴板序号（0=未知，现场取）。
+				// 放到 goroutine 跑：onHotkey 最长等剪贴板 600ms，不能卡住消息循环，
+				// 否则低级键盘钩子回调被拖到超时，双击手势会失灵
+				go a.onHotkey(uintptr(lParam))
 				return 0
 			case wmReHotkey:
 				a.reghotkey()
@@ -246,9 +254,10 @@ func (a *App) installDoubleCopyHook(hInstance uintptr) {
 	procSetWindowsHookExW.Call(whKeyboardLl, hookProcPtr, hInstance, 0)
 }
 
-// hookKey 识别“双击 Ctrl+C”：500ms 内按住 Ctrl 连按两次 C，中间没碰过别的键。
+// hookKey 识别“双击 Ctrl+C”：700ms 内按住 Ctrl 连按两次 C，中间没碰过别的键。
 // 识别到后发一条 wmHotkey 复用现有翻译流程；所有按键原样放行，正常 Ctrl+C
-// 不受影响；按住 C 产生的自动重复不算第二击。
+// 不受影响；按住 C 产生的自动重复不算第二击；Ctrl 状态用 GetAsyncKeyState
+// 实时校准，钩子事件被系统丢弃时手势依然可识别。
 func (a *App) hookKey(msg uint32, k *kbdllHookStruct) {
 	if a.doubleCopyOff.Load() || k.flags&llkhfInjected != 0 {
 		return // 功能关闭；忽略 SendInput 等注入的按键，避免自触发
@@ -261,19 +270,29 @@ func (a *App) hookKey(msg uint32, k *kbdllHookStruct) {
 			return
 		}
 		if k.vkCode == vkKeyC {
-			if a.dcCDown { // 按住不放产生的自动重复
+			now := time.Now()
+			// 按住 C 不放产生的自动重复间隔只有几十毫秒，远小于人手连击；
+			// 若 C 的 up 事件被系统丢弃，仅靠 dcCDown 会把真实第二击误当
+			// 自动重复，这里加时间窗双重判断兜底
+			if a.dcCDown && now.Sub(a.dcLastC) < 250*time.Millisecond {
 				return
 			}
 			a.dcCDown = true
-			if !a.dcCtrlDown {
+			// 以实时键态校准 Ctrl：低级钩子事件在系统繁忙时可能被超时丢弃，
+			// 只靠 down/up 序列维护状态会误判（双击时灵时不灵的主因）
+			if r, _, _ := procGetAsyncKeyState.Call(uintptr(vkControl)); r&0x8000 == 0 {
+				a.dcCtrlDown = false
 				a.dcLastC = time.Time{} // 不带 Ctrl 的 C 不构成手势
 				return
 			}
-			now := time.Now()
-			if !a.dcLastC.IsZero() && now.Sub(a.dcLastC) < 500*time.Millisecond {
+			a.dcCtrlDown = true
+			if !a.dcLastC.IsZero() && now.Sub(a.dcLastC) < 700*time.Millisecond {
 				a.dcLastC = time.Time{}
 				if hwnd := a.hotkeyWnd.Load(); hwnd != 0 {
-					procPostMessageW.Call(hwnd, wmHotkey, 0, 0) // 双击！触发翻译
+					// 双击！此刻按键尚未放行，目标程序还没执行复制，先记下
+					// 剪贴板序号，供 onHotkey 作为比对基线（随 lParam 传回）
+					seq, _, _ := procClipboardSeq.Call()
+					procPostMessageW.Call(hwnd, wmHotkey, 0, seq)
 				}
 				return
 			}
@@ -391,13 +410,37 @@ func (a *App) quit() {
 	runtime.Quit(a.ctx)
 }
 
+// clipglotTitle 主窗口标题，供 FindWindow 用；包级变量避免轮询里反复分配。
+var clipglotTitle, _ = syscall.UTF16PtrFromString("ClipGlot")
+
+// forceForeground 把主窗口强制带到前台。注册热键触发时系统会授予前台
+// 权限，但双击 Ctrl+C 走钩子路径没有该权限，后台进程直接
+// SetForegroundWindow 会被前台锁定策略拦下（窗口只在任务栏闪烁）；
+// 短暂 AttachThreadInput 到当前前台线程共享输入状态后再置前即可绕过。
+func (a *App) forceForeground() {
+	h, _, _ := procFindWindowW.Call(0, uintptr(unsafe.Pointer(clipglotTitle)))
+	if h == 0 {
+		return
+	}
+	thisThread, _, _ := procGetCurrentThreadId.Call()
+	fg, _, _ := procGetForegroundWindow.Call()
+	fgThread, _, _ := procGetWindowThreadProcID.Call(fg, 0)
+	attached := fg != 0 && fgThread != 0 && fgThread != thisThread
+	if attached {
+		procAttachThreadInput.Call(thisThread, fgThread, 1)
+	}
+	procSetForegroundWin.Call(h)
+	if attached {
+		procAttachThreadInput.Call(thisThread, fgThread, 0)
+	}
+}
+
 // hideOnMinimise 把“最小化”变成“隐藏到托盘”。Wails v2 没有最小化拦截钩子，
 // 这里轮询主窗口状态，发现最小化立即隐藏；150ms 的轮询开销可忽略。
 func (a *App) hideOnMinimise() {
-	title, _ := syscall.UTF16PtrFromString("ClipGlot")
 	for {
 		time.Sleep(150 * time.Millisecond)
-		h, _, _ := procFindWindowW.Call(0, uintptr(unsafe.Pointer(title)))
+		h, _, _ := procFindWindowW.Call(0, uintptr(unsafe.Pointer(clipglotTitle)))
 		if h == 0 {
 			continue
 		}
@@ -431,9 +474,16 @@ func (a *App) applyHotkey() {
 }
 
 // onHotkey 模拟 Ctrl+C 抓取当前选中文本，唤起主窗口并通知前端翻译。
-func (a *App) onHotkey() {
-	seq0, _, _ := procClipboardSeq.Call()
+// seq0 是触发瞬间的剪贴板序号：双击 Ctrl+C 路径由钩子在按键放行前记录，
+// 用户真实的第二次 Ctrl+C 随即就把选中文本写入了剪贴板，比对该序号能直接
+// 读到文本，不依赖目标程序响应合成按键（不少程序复制相同内容时不重写
+// 剪贴板，序号不变）；全局热键路径触发时用户尚未复制，传 0 由这里现场取。
+func (a *App) onHotkey(seq0 uintptr) {
+	if seq0 == 0 {
+		seq0, _, _ = procClipboardSeq.Call()
+	}
 	sendCopy()
+	a.showWindow() // 先唤起窗口，抓取文本与显示并行，体感更快
 
 	text := ""
 	for deadline := time.Now().Add(600 * time.Millisecond); ; {
@@ -446,10 +496,7 @@ func (a *App) onHotkey() {
 			break
 		}
 	}
-	text = strings.TrimSpace(text)
-
-	a.showWindow()
-	runtime.EventsEmit(a.ctx, "quick:translate", map[string]string{"text": text})
+	runtime.EventsEmit(a.ctx, "quick:translate", map[string]string{"text": strings.TrimSpace(text)})
 }
 
 // keybdInput 对应 Win32 INPUT 结构的 Keyboard 分支；联合体按最大的

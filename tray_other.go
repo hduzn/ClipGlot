@@ -7,3 +7,5 @@ package main
 func (a *App) startHotkeyWatcher() {}
 
 func (a *App) applyHotkey() {}
+
+func (a *App) forceForeground() {}

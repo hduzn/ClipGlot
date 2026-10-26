@@ -51,10 +51,12 @@ func (a *App) startup(ctx context.Context) {
 	go a.startHotkeyWatcher()
 }
 
-// showWindow 唤起主窗口：从托盘/最小化状态恢复并置前。
+// showWindow 唤起主窗口：从托盘/最小化状态恢复并强制置前
+//（Windows 下 forceForeground 绕过前台锁定，见 tray_windows.go）。
 func (a *App) showWindow() {
 	runtime.WindowUnminimise(a.ctx)
 	runtime.WindowShow(a.ctx)
+	a.forceForeground()
 }
 
 // onSecondInstance 再次启动时把已有窗口带到前台。
