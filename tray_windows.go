@@ -53,6 +53,7 @@ var (
 	procGetModuleFileNameW     = kernel32.NewProc("GetModuleFileNameW")
 
 	procSendInput        = user32.NewProc("SendInput")
+	procGetAsyncKeyState = user32.NewProc("GetAsyncKeyState")
 	procClipboardSeq     = user32.NewProc("GetClipboardSequenceNumber")
 	procOpenClipboard    = user32.NewProc("OpenClipboard")
 	procCloseClipboard   = user32.NewProc("CloseClipboard")
@@ -372,8 +373,10 @@ type keybdInput struct {
 	_     [8]byte
 }
 
-// sendCopy 发送“松开其他修饰键 + Ctrl+C”。快捷键若含 Shift/Alt，先合成
-// 松开，避免目标程序把按键理解成 Ctrl+Shift+C 之类的其他组合。
+// sendCopy 发送“松开仍被按住的修饰键 + Ctrl+C”。快捷键若含 Shift/Alt，先合成
+// 松开，避免目标程序把按键理解成 Ctrl+Shift+C 之类的其他组合。只对真正按下
+// 的修饰键发合成 key-up：多余的事件会成为“无配对按下”的孤儿事件，干扰输入法
+// 和依赖修饰键状态的程序（按 Alt+T 后键盘失灵的经典成因）。
 func sendCopy() {
 	const (
 		inputKeyboard = 1
@@ -387,10 +390,13 @@ func sendCopy() {
 	)
 	down := func(vk uint32) keybdInput { return keybdInput{typ: inputKeyboard, wVk: uint16(vk)} }
 	up := func(vk uint32) keybdInput { return keybdInput{typ: inputKeyboard, wVk: uint16(vk), flags: keyUp} }
-	inputs := []keybdInput{
-		up(vkShift), up(vkMenu), up(vkLWin), up(vkRWin), up(vkControl),
-		down(vkControl), down(vkC), up(vkC),
+	var inputs []keybdInput
+	for _, vk := range []uint32{vkShift, vkMenu, vkLWin, vkRWin, vkControl} {
+		if r, _, _ := procGetAsyncKeyState.Call(uintptr(vk)); r&0x8000 != 0 { // 高位=当前按下
+			inputs = append(inputs, up(vk))
+		}
 	}
+	inputs = append(inputs, down(vkControl), down(vkC), up(vkC))
 	procSendInput.Call(
 		uintptr(len(inputs)),
 		uintptr(unsafe.Pointer(&inputs[0])),

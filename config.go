@@ -19,6 +19,13 @@ type ProviderConfig struct {
 	Enabled bool   `json:"enabled"`
 }
 
+// 划词快捷键的默认值与历史默认值。旧默认 Alt+T 会在部分程序/输入法下
+// 造成修饰键状态错乱（按 Alt+T 后键盘像被卡住），已弃用。
+const (
+	hotkeyDefault    = "Ctrl+Shift+Space"
+	hotkeyOldDefault = "Alt+T"
+)
+
 // Config 是应用的全部持久化状态。
 type Config struct {
 	Providers  []ProviderConfig `json:"providers"`
@@ -32,7 +39,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		TargetLang: "en",
 		Theme:      "system",
-		Hotkey:     "Alt+T",
+		Hotkey:     hotkeyDefault,
 		Providers: []ProviderConfig{
 			{ID: "bailian", Type: "preset", Name: "阿里云百炼", BaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1", Model: "qwen-mt-flash"},
 			{ID: "deepseek", Type: "preset", Name: "DeepSeek", BaseURL: "https://api.deepseek.com/v1", Model: "deepseek-flash"},
@@ -70,6 +77,17 @@ func LoadConfig() *Config {
 			continue
 		}
 		applySaved(cfg, saved)
+		// 还停留在旧默认 Alt+T 的配置一次性迁移到新默认，并立即落盘，
+		// 让用户后续手动改回的其他值不会再被覆盖
+		if cfg.Hotkey == hotkeyOldDefault {
+			cfg.Hotkey = hotkeyDefault
+			if merged, err := json.MarshalIndent(cfg, "", "  "); err == nil {
+				if err := os.WriteFile(paths[0], merged, 0o600); err == nil && i > 0 {
+					_ = os.Remove(path) // 顺带完成 %AppData% → 便携目录迁移
+				}
+			}
+			return cfg
+		}
 		if i > 0 { // 旧位置 → 便携位置
 			if merged, err := json.MarshalIndent(cfg, "", "  "); err == nil {
 				if err := os.WriteFile(paths[0], merged, 0o600); err == nil {
