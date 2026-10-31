@@ -8,6 +8,8 @@
 
 直接双击 `release\ClipGlot_v1.4.0.exe` 即可使用。
 
+![ClipGlot 主界面](docs/screenshot-main.png)
+
 ## 功能
 
 - **左侧输入 / 右侧结果**：停止输入约 0.7 秒后自动翻译，或按 `Ctrl+Enter` 立即翻译
