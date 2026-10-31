@@ -1,5 +1,6 @@
 build/bin/
 release/
 config.json
+RELEASE.local.md
 *.tmp
 frontend/wailsjs/
