@@ -2,7 +2,7 @@
 
 轻巧的 Windows 桌面 AI 翻译工具。左侧输入原文（自动检测语言），右侧多个 AI 同时翻译，一键复制对比结果；也支持在任意程序中划词后按快捷键翻译。基于 [Wails v2](https://wails.io)（Go + WebView2），无 Node 依赖，release 单文件约 13MB（已内嵌 WebView2 引导器，极少数没有 WebView2 运行时的 Win10 机器上首次运行会自动安装）。
 
-直接双击 `release\ClipGlot_v1.2.0.exe` 即可使用。
+直接双击 `release\ClipGlot_v1.4.0.exe` 即可使用。
 
 ## 功能
 
@@ -66,11 +66,53 @@ build.bat      # 一键构建发布版
 构建流程：
 
 - `wails build` 产物固定输出到 **`build\bin\ClipGlot.exe`**
-- `build.bat` 在此基础上额外复制一份带版本号的发布版到 **`release\ClipGlot_v1.0.0.exe`**
+- `build.bat` 在此基础上额外复制一份带版本号的发布版到 **`release\ClipGlot_v1.4.0.exe`**
 - 版本号唯一来源是 [wails.json](wails.json) 的 `info.productVersion`，改版本只需改这一处，文件名与 exe 属性会同步变化
 
 > ⚠️ 不要用裸 `go build` 出发布版：缺少 `production` 构建标签时，程序启动只会弹一个
 > "Wails applications will not build without the correct build tags" 的错误框。
+
+## 发布到 GitHub
+
+### 1. 推送代码
+
+在 GitHub 上新建一个**空仓库**（不要勾选自动初始化 README/.gitignore），然后：
+
+```bash
+# 本项目 origin 指向内网 Git 服务，GitHub 作为第二个远程仓库添加
+git remote add github https://github.com/<你的用户名>/ClipGlot.git
+git push -u github main
+```
+
+之后代码有更新时：`git push github main`。
+
+> `release/`、`build/bin/` 已在 [.gitignore](.gitignore) 中排除，exe 不会随代码推送，
+> 需以 Release 附件的形式发布下载。
+
+### 2. 发布 Release（提供 exe 下载）
+
+版本号以 [wails.json](wails.json) 的 `info.productVersion` 为准（当前 v1.4.0），
+对应构建产物 `release\ClipGlot_v1.4.0.exe`。先运行 `build.bat` 确认 exe 已生成。
+
+**方式 A：网页操作**
+
+1. GitHub 仓库页 → **Releases** → **Draft a new release**
+2. **Choose a tag** 输入 `v1.4.0` 并回车（发布时自动创建该 tag）
+3. 标题填 `v1.4.0`，描述写本次更新内容
+4. 把 `release\ClipGlot_v1.4.0.exe` 拖入附件区
+5. 点 **Publish release**，之后任何人都能在仓库 Releases 页下载 exe
+
+**方式 B：GitHub CLI（一条命令完成）**
+
+```bash
+winget install GitHub.cli   # 首次使用先安装，之后 gh auth login 登录
+gh release create v1.4.0 release/ClipGlot_v1.4.0.exe --title "ClipGlot v1.4.0" --notes "更新说明"
+```
+
+`gh release create` 会自动创建 tag、标题、说明并上传 exe 附件，效果与方式 A 相同。
+
+> 升级版本时：改 `wails.json` 的 `productVersion` → `build.bat` 重新构建 → 按上面步骤发布新 Release，
+> 并同步更新本文档中出现的版本号。
 
 ## 项目结构
 
