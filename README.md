@@ -1,6 +1,10 @@
 # ClipGlot
 
-轻巧的 Windows 桌面 AI 翻译工具。左侧输入原文（自动检测语言），右侧多个 AI 同时翻译，一键复制对比结果；也支持在任意程序中划词后按快捷键翻译。基于 [Wails v2](https://wails.io)（Go + WebView2），无 Node 依赖，release 单文件约 13MB（已内嵌 WebView2 引导器，极少数没有 WebView2 运行时的 Win10 机器上首次运行会自动安装）。
+轻巧的 Windows 桌面 AI 翻译工具。
+
+左侧输入原文（自动检测语言），右侧多个 AI 同时翻译，一键复制对比结果；也支持在任意程序中划词后按快捷键翻译。
+
+基于 [Wails v2](https://wails.io)（Go + WebView2），无 Node 依赖，release 单文件约 13MB（已内嵌 WebView2 引导器，极少数没有 WebView2 运行时的 Win10 机器上首次运行会自动安装）。
 
 直接双击 `release\ClipGlot_v1.4.0.exe` 即可使用。
 
