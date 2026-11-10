@@ -7,6 +7,7 @@ package main
 // 托盘左键唤起主窗口，右键菜单可显示主窗口或退出。
 
 import (
+	"fmt"
 	goruntime "runtime"
 	"strings"
 	"sync/atomic"
@@ -44,6 +45,20 @@ const (
 	nifMsg    = 1 // NIF_MESSAGE
 	nifIcon   = 2 // NIF_ICON
 	nifTip    = 4 // NIF_TIP
+
+	// 常用短语：热键 id 与托盘菜单命令 id 都用「基准 + 条目序号」分配，
+	// 与全局划词热键（hotkeyID=1）错开，避免互相覆盖。
+	snippetHotkeyBase = 100
+	snippetCmdBase    = 1000
+	snippetMenuMax    = 24 // 托盘菜单里显示名称的最大字数
+
+	mfString    = 0
+	mfGrayed    = 0x1
+	mfSeparator = 0x800
+	mfPopup     = 0x10
+
+	gmemMoveable = 0x0002 // GlobalAlloc：可移动内存（剪贴板要求）
+	vkKeyV       = 0x56
 )
 
 var (
@@ -74,11 +89,18 @@ var (
 	procGlobalLock       = kernel32.NewProc("GlobalLock")
 	procGlobalUnlock     = kernel32.NewProc("GlobalUnlock")
 
-	procShellNotifyIcon  = shell32.NewProc("Shell_NotifyIconW")
-	procExtractIconExW   = shell32.NewProc("ExtractIconExW")
-	procCreatePopupMenu  = user32.NewProc("CreatePopupMenu")
-	procAppendMenuW      = user32.NewProc("AppendMenuW")
-	procTrackPopupMenuEx = user32.NewProc("TrackPopupMenuEx")
+	// 常用短语粘贴：写剪贴板 + 模拟 Ctrl+V，以及重建菜单时销毁旧句柄
+	procEmptyClipboard   = user32.NewProc("EmptyClipboard")
+	procSetClipboardData = user32.NewProc("SetClipboardData")
+	procGlobalAlloc      = kernel32.NewProc("GlobalAlloc")
+	procGlobalFree       = kernel32.NewProc("GlobalFree")
+	procDestroyMenu      = user32.NewProc("DestroyMenu")
+
+	procShellNotifyIcon       = shell32.NewProc("Shell_NotifyIconW")
+	procExtractIconExW        = shell32.NewProc("ExtractIconExW")
+	procCreatePopupMenu       = user32.NewProc("CreatePopupMenu")
+	procAppendMenuW           = user32.NewProc("AppendMenuW")
+	procTrackPopupMenuEx      = user32.NewProc("TrackPopupMenuEx")
 	procGetCursorPos          = user32.NewProc("GetCursorPos")
 	procSetForegroundWin      = user32.NewProc("SetForegroundWindow")
 	procGetForegroundWindow   = user32.NewProc("GetForegroundWindow")
@@ -98,9 +120,15 @@ var (
 		if a := appRef.Load(); a != nil {
 			switch msg {
 			case wmHotkey:
+				// wParam 是 RegisterHotKey 的 id：≥snippetHotkeyBase 说明某条短语被触发；
+				// 否则是划词翻译（含双击 Ctrl+C 手势，那条路径 wParam 为 0）。
 				// lParam 携带钩子在手势识别瞬间记录的剪贴板序号（0=未知，现场取）。
-				// 放到 goroutine 跑：onHotkey 最长等剪贴板 600ms，不能卡住消息循环，
+				// 一律放到 goroutine 跑：onHotkey 最长等剪贴板 600ms，不能卡住消息循环，
 				// 否则低级键盘钩子回调被拖到超时，双击手势会失灵
+				if id := uint32(wParam); id >= snippetHotkeyBase && id < snippetHotkeyBase+maxSnippets {
+					go a.onSnippet(int(id - snippetHotkeyBase))
+					return 0
+				}
 				go a.onHotkey(uintptr(lParam))
 				return 0
 			case wmReHotkey:
@@ -115,11 +143,15 @@ var (
 				}
 				return 0
 			case wmCommand:
-				switch uint32(wParam & 0xFFFF) {
-				case trayCmdShow:
+				id := uint32(wParam & 0xFFFF)
+				switch {
+				case id == trayCmdShow:
 					a.showWindow()
-				case trayCmdQuit:
+				case id == trayCmdQuit:
 					a.quit()
+				case id >= snippetCmdBase && id < snippetCmdBase+maxSnippets:
+					// 子菜单点击不经过 TrackPopupMenu 的返回值，走 WM_COMMAND
+					go a.onSnippet(int(id - snippetCmdBase))
 				}
 				return 0
 			default:
@@ -212,8 +244,7 @@ func (a *App) startHotkeyWatcher() {
 		taskbarCreatedMsg.Store(uint32(v))
 	}
 
-	a.reghotkey()
-	a.trayMenu = createTrayMenu()
+	a.reghotkey() // 注册全部热键，并按当前短语列表建好托盘菜单
 	a.addTrayIcon(hwnd, nimAdd)
 	a.installDoubleCopyHook(hInstance)
 	go a.hideOnMinimise()
@@ -228,24 +259,86 @@ func (a *App) startHotkeyWatcher() {
 	}
 }
 
-// reghotkey 按当前配置注册热键；停用或组合键解析失败时不注册，
-// 同时把托盘悬停提示同步为当前快捷键。
+// reghotkey 按当前配置注册全部全局热键：划词翻译一个，每条启用的常用短语各一个。
+// 停用、格式非法或组合键已被其他程序占用时不注册，并把原因记到 hotkeyWarn，
+// 供设置面板保存后提示（RegisterHotKey 失败是静默的，不提示就会像“按了没反应”）。
 func (a *App) reghotkey() {
 	hwnd := a.hotkeyWnd.Load()
 	if hwnd == 0 {
 		return
 	}
-	procUnregisterHotKey.Call(hwnd, hotkeyID)
+
+	// 先快照配置再解锁：addTrayIcon/addTrayMenu 内部还要加锁，持锁调用会死锁
 	a.mu.Lock()
 	combo, off, doubleOff := a.config.Hotkey, a.config.HotkeyOff, a.config.DoubleCopyOff
+	snippets := a.config.Snippets
+	if len(snippets) > maxSnippets {
+		snippets = snippets[:maxSnippets]
+	}
 	a.mu.Unlock()
 	a.doubleCopyOff.Store(doubleOff)
+
+	// 先全部注销：配置里删掉的短语、改了键的短语都得腾出原来的组合键
+	procUnregisterHotKey.Call(hwnd, hotkeyID)
+	for i := 0; i < maxSnippets; i++ {
+		procUnregisterHotKey.Call(hwnd, uintptr(snippetHotkeyBase+i))
+	}
+
+	var warns []string
 	if !off {
 		if mod, vk, ok := parseHotkey(combo); ok {
-			procRegisterHotKey.Call(hwnd, hotkeyID, uintptr(mod), uintptr(vk))
+			if r, _, _ := procRegisterHotKey.Call(hwnd, hotkeyID, uintptr(mod), uintptr(vk)); r == 0 {
+				warns = append(warns, fmt.Sprintf("%s（划词翻译）已被其他程序占用", combo))
+			}
 		}
 	}
+	for i, sn := range snippets {
+		if !sn.Enabled {
+			continue
+		}
+		hk := strings.TrimSpace(sn.Hotkey)
+		if hk == "" {
+			continue // 没配热键：只出现在托盘菜单里
+		}
+		mod, vk, ok := parseHotkey(hk)
+		if !ok {
+			warns = append(warns, fmt.Sprintf("「%s」的热键 %s 无法识别", snippetLabel(sn), hk))
+			continue
+		}
+		if r, _, _ := procRegisterHotKey.Call(hwnd, uintptr(snippetHotkeyBase+i), uintptr(mod), uintptr(vk)); r == 0 {
+			warns = append(warns, fmt.Sprintf("「%s」的热键 %s 已被其他程序占用", snippetLabel(sn), hk))
+		}
+	}
+	joined := strings.Join(warns, "；")
+	a.hotkeyWarn.Store(&joined)
+
+	a.rebuildTrayMenu(snippets)
 	a.addTrayIcon(hwnd, nimModify)
+}
+
+// snippetLabel 是短语在托盘菜单/提示里显示的名字：没填名字时退化为内容开头。
+func snippetLabel(sn Snippet) string {
+	name := strings.TrimSpace(sn.Name)
+	if name == "" {
+		name = strings.TrimSpace(sn.Text)
+	}
+	if r := []rune(name); len(r) > snippetMenuMax {
+		name = string(r[:snippetMenuMax]) + "…"
+	}
+	if name == "" {
+		name = "（空短语）"
+	}
+	return name
+}
+
+// rebuildTrayMenu 按当前短语重建托盘右键菜单；只在 watcher 线程调用，
+// 避免与正在弹出的 TrackPopupMenu 争用句柄。
+func (a *App) rebuildTrayMenu(snippets []Snippet) {
+	if a.trayMenu != 0 {
+		procDestroyMenu.Call(a.trayMenu)
+		a.trayMenu = 0
+	}
+	a.trayMenu = createTrayMenu(snippets)
 }
 
 // installDoubleCopyHook 装低级键盘钩子，识别“双击 Ctrl+C”手势。
@@ -369,20 +462,46 @@ func (a *App) addTrayIcon(hwnd uintptr, op uint32) {
 	procShellNotifyIcon.Call(uintptr(op), uintptr(unsafe.Pointer(&nid)))
 }
 
-// createTrayMenu 建托盘右键菜单：显示主窗口 / 退出。
-func createTrayMenu() uintptr {
+// createTrayMenu 建托盘右键菜单：显示主窗口 / 常用短语（子菜单）/ 退出。
+// 没配任何短语时不插这一级，避免出现空菜单。
+func createTrayMenu(snippets []Snippet) uintptr {
 	m, _, _ := procCreatePopupMenu.Call()
 	showText, _ := syscall.UTF16PtrFromString("显示主窗口")
 	quitText, _ := syscall.UTF16PtrFromString("退出")
-	procAppendMenuW.Call(m, 0 /*MF_STRING*/, trayCmdShow, uintptr(unsafe.Pointer(showText)))
-	procAppendMenuW.Call(m, 0x800 /*MF_SEPARATOR*/, 0, 0)
-	procAppendMenuW.Call(m, 0 /*MF_STRING*/, trayCmdQuit, uintptr(unsafe.Pointer(quitText)))
+	procAppendMenuW.Call(m, mfString, trayCmdShow, uintptr(unsafe.Pointer(showText)))
+	procAppendMenuW.Call(m, mfSeparator, 0, 0)
+
+	if len(snippets) > 0 {
+		sub, _, _ := procCreatePopupMenu.Call()
+		for i, sn := range snippets {
+			if i >= maxSnippets {
+				break
+			}
+			label := snippetLabel(sn)
+			if hk := strings.TrimSpace(sn.Hotkey); hk != "" {
+				label += "\t" + hk // 制表符让快捷键在菜单里右对齐显示
+			}
+			flags := uintptr(mfString)
+			if !sn.Enabled || strings.TrimSpace(sn.Text) == "" {
+				flags |= mfGrayed // 停用/空内容仍列出，但点不动，便于知道它存在
+			}
+			ptr, _ := syscall.UTF16PtrFromString(label)
+			procAppendMenuW.Call(sub, flags, uintptr(snippetCmdBase+i), uintptr(unsafe.Pointer(ptr)))
+		}
+		procAppendMenuW.Call(m, mfPopup, sub, 0)
+		procAppendMenuW.Call(m, mfSeparator, 0, 0)
+	}
+
+	procAppendMenuW.Call(m, mfString, trayCmdQuit, uintptr(unsafe.Pointer(quitText)))
 	return m
 }
 
 // showTrayMenu 弹出托盘右键菜单。TrackPopupMenu 前先 SetForegroundWindow
 // 是菜单无法消失的经典修法（MS KB135788）；TPM_RETURNCMD 直接返回选中项。
 func (a *App) showTrayMenu(hwnd uintptr) {
+	if a.trayMenu == 0 {
+		return
+	}
 	var pt [2]int32
 	procGetCursorPos.Call(uintptr(unsafe.Pointer(&pt[0])))
 	procSetForegroundWin.Call(hwnd)
@@ -390,11 +509,14 @@ func (a *App) showTrayMenu(hwnd uintptr) {
 		a.trayMenu, 0x0100|0x0002, /* TPM_RETURNCMD | TPM_RIGHTBUTTON */
 		uintptr(pt[0]), uintptr(pt[1]), hwnd, 0)
 	procPostMessageW.Call(hwnd, 0 /*WM_NULL*/, 0, 0)
-	switch id {
-	case trayCmdShow:
+	switch {
+	case id == trayCmdShow:
 		a.showWindow()
-	case trayCmdQuit:
+	case id == trayCmdQuit:
 		a.quit()
+	case id >= snippetCmdBase && id < snippetCmdBase+maxSnippets:
+		// 子菜单项：TPM_RETURNCMD 直接返回它的命令 id
+		go a.onSnippet(int(id - snippetCmdBase))
 	}
 }
 
@@ -499,6 +621,32 @@ func (a *App) onHotkey(seq0 uintptr) {
 	runtime.EventsEmit(a.ctx, "quick:translate", map[string]string{"text": strings.TrimSpace(text)})
 }
 
+// onSnippet 把第 i 条常用短语粘贴到当前前台窗口的光标处。
+// 走「写剪贴板 + 模拟 Ctrl+V」而不是逐字符 SendInput：终端、浏览器富文本框、
+// 输入法组合状态下逐字符注入都容易漏字或被吞，粘贴则一律按纯文本落地。
+// 代价是覆盖用户原有剪贴板内容；提权窗口（管理员权限运行的目标程序）收不到
+// SendInput，此时文本已经留在剪贴板里，手动 Ctrl+V 一次即可。
+func (a *App) onSnippet(i int) {
+	a.mu.Lock()
+	var (
+		sn Snippet
+		ok = i >= 0 && i < len(a.config.Snippets)
+	)
+	if ok {
+		sn = a.config.Snippets[i]
+	}
+	a.mu.Unlock()
+	if !ok || !sn.Enabled || strings.TrimSpace(sn.Text) == "" {
+		return
+	}
+	if !writeClipboardText(sn.Text) {
+		return
+	}
+	// 剪贴板刚写入时目标程序可能还读到旧内容，稍等一个调度间隔再发 Ctrl+V
+	time.Sleep(30 * time.Millisecond)
+	sendPaste()
+}
+
 // keybdInput 对应 Win32 INPUT 结构的 Keyboard 分支；联合体按最大的
 // MOUSEINPUT 补齐大小，否则 SendInput 会因 cbSize 不符而拒绝调用。
 type keybdInput struct {
@@ -512,11 +660,19 @@ type keybdInput struct {
 	_     [8]byte
 }
 
-// sendCopy 发送“松开仍被按住的修饰键 + Ctrl+C”。快捷键若含 Shift/Alt，先合成
-// 松开，避免目标程序把按键理解成 Ctrl+Shift+C 之类的其他组合。只对真正按下
-// 的修饰键发合成 key-up：多余的事件会成为“无配对按下”的孤儿事件，干扰输入法
-// 和依赖修饰键状态的程序（按 Alt+T 后键盘失灵的经典成因）。
-func sendCopy() {
+// sendCopy 发送“松开仍被按住的修饰键 + Ctrl+C”，抓取当前选中的文本。
+func sendCopy() { sendCtrlKey(vkKeyC) }
+
+// sendPaste 发送“松开仍被按住的修饰键 + Ctrl+V”，把剪贴板内容粘贴到光标处。
+// 触发短语热键时用户往往还按着 Ctrl+Shift，必须先合成松开，否则目标程序会把
+// 按键当成 Ctrl+Shift+V（部分程序里那是“粘贴为纯文本”，部分程序干脆不响应）。
+func sendPaste() { sendCtrlKey(vkKeyV) }
+
+// sendCtrlKey 发送 Ctrl+主键。快捷键若含 Shift/Alt，先合成松开，避免目标程序
+// 把按键理解成 Ctrl+Shift+C 之类的其他组合。只对真正按下的修饰键发合成 key-up：
+// 多余的事件会成为“无配对按下”的孤儿事件，干扰输入法和依赖修饰键状态的程序
+// （按 Alt+T 后键盘失灵的经典成因）。
+func sendCtrlKey(mainVk uint32) {
 	const (
 		inputKeyboard = 1
 		keyUp         = 2 // KEYEVENTF_KEYUP
@@ -525,7 +681,6 @@ func sendCopy() {
 		vkMenu        = 0x12
 		vkLWin        = 0x5B
 		vkRWin        = 0x5C
-		vkC           = 0x43
 	)
 	down := func(vk uint32) keybdInput { return keybdInput{typ: inputKeyboard, wVk: uint16(vk)} }
 	up := func(vk uint32) keybdInput { return keybdInput{typ: inputKeyboard, wVk: uint16(vk), flags: keyUp} }
@@ -535,25 +690,31 @@ func sendCopy() {
 			inputs = append(inputs, up(vk))
 		}
 	}
-	inputs = append(inputs, down(vkControl), down(vkC), up(vkC))
+	inputs = append(inputs, down(vkControl), down(mainVk), up(mainVk))
 	procSendInput.Call(
 		uintptr(len(inputs)),
 		uintptr(unsafe.Pointer(&inputs[0])),
 		unsafe.Sizeof(keybdInput{}))
 }
 
-// readClipboardText 读取剪贴板纯文本（CF_UNICODETEXT）；剪贴板正被其他
-// 程序占用时稍等重试，最终失败返回空串。
-func readClipboardText() string {
+// openClipboard 独占打开剪贴板；剪贴板正被其他程序占用时稍等重试。
+func openClipboard() bool {
 	for i := 0; i < 10; i++ {
 		if r, _, _ := procOpenClipboard.Call(0); r != 0 {
-			text := readClipboardData()
-			procCloseClipboard.Call()
-			return text
+			return true
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	return ""
+	return false
+}
+
+// readClipboardText 读取剪贴板纯文本（CF_UNICODETEXT），失败返回空串。
+func readClipboardText() string {
+	if !openClipboard() {
+		return ""
+	}
+	defer procCloseClipboard.Call()
+	return readClipboardData()
 }
 
 func readClipboardData() string {
@@ -577,6 +738,39 @@ func readClipboardData() string {
 }
 
 const cfUnicodeText = 13
+
+// writeClipboardText 把纯文本写入剪贴板（CF_UNICODETEXT），占用剪贴板失败时返回 false。
+// GlobalAlloc 出来的句柄一旦交给系统（SetClipboardData 成功）就不能再释放，
+// 只有移交失败时才由自己 GlobalFree。
+func writeClipboardText(text string) bool {
+	if !openClipboard() {
+		return false
+	}
+	defer procCloseClipboard.Call()
+	procEmptyClipboard.Call()
+
+	u := utf16.Encode([]rune(text))
+	h, _, _ := procGlobalAlloc.Call(gmemMoveable, uintptr(len(u)+1)*2)
+	if h == 0 {
+		return false
+	}
+	p, _, _ := procGlobalLock.Call(h)
+	if p == 0 {
+		procGlobalFree.Call(h)
+		return false
+	}
+	// 缓冲末尾留一个 NUL，CF_UNICODETEXT 要求以零结尾
+	dst := unsafe.Slice((*uint16)(ptrTo(p)), len(u)+1)
+	copy(dst, u)
+	dst[len(u)] = 0
+	procGlobalUnlock.Call(h)
+
+	if r, _, _ := procSetClipboardData.Call(cfUnicodeText, h); r == 0 {
+		procGlobalFree.Call(h)
+		return false
+	}
+	return true
+}
 
 // ptrTo 把 syscall 返回的地址转回指针。该内存由系统分配，与 Go GC 无关，
 // 且只在剪贴板锁定期间同步访问。

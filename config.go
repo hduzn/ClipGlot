@@ -20,15 +20,30 @@ type ProviderConfig struct {
 }
 
 // 划词快捷键的默认值与历史默认值。旧默认 Alt+T 会在部分程序/输入法下
-// 造成修饰键状态错乱（按 Alt+T 后键盘像被卡住），已弃用。
+// 造成修饰键状态混乱（按 Alt+T 后键盘像被卡住），已弃用。
 const (
 	hotkeyDefault    = "Ctrl+Shift+Space"
 	hotkeyOldDefault = "Alt+T"
 )
 
+// maxSnippets 是常用短语的条数上限：热键 id 用「基准 + 序号」分配，
+// 上限保证 id 区间不越界，也避免托盘菜单被塞太长。
+const maxSnippets = 32
+
+// Snippet 是一条常用短语：按它自己的热键，内容会被粘贴到当前光标处。
+// Hotkey 为空时该条不占热键，只出现在托盘右键菜单里。
+type Snippet struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`   // 托盘菜单/设置里显示的名字
+	Text    string `json:"text"`   // 实际粘贴的内容
+	Hotkey  string `json:"hotkey"` // 如 "Ctrl+Shift+1"，空则只走托盘菜单
+	Enabled bool   `json:"enabled"`
+}
+
 // Config 是应用的全部持久化状态。
 type Config struct {
 	Providers     []ProviderConfig `json:"providers"`
+	Snippets      []Snippet        `json:"snippets"`
 	TargetLang    string           `json:"targetLang"`
 	Theme         string           `json:"theme"`  // "system" | "light" | "dark"
 	Hotkey        string           `json:"hotkey"` // 划词翻译全局快捷键，如 "Ctrl+Shift+Space"
@@ -114,6 +129,8 @@ func applySaved(cfg *Config, saved Config) {
 	}
 	cfg.HotkeyOff = saved.HotkeyOff
 	cfg.DoubleCopyOff = saved.DoubleCopyOff
+	// 常用短语整组覆盖：条目由用户完全掌控，没有需要保留的内置默认项
+	cfg.Snippets = saved.Snippets
 	var customs []ProviderConfig
 	for _, p := range saved.Providers {
 		if p.Type == "custom" {
@@ -154,4 +171,9 @@ func saveConfigFile(cfg *Config) error {
 
 func newCustomID() string {
 	return "custom-" + time.Now().Format("0102150405")
+}
+
+// newSnippetID 给没有 id 的短语补一个标识（毫秒级，避免同一秒添加两条时撞 id）。
+func newSnippetID() string {
+	return "snip-" + time.Now().Format("0102150405.000")
 }

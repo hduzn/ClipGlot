@@ -6,7 +6,7 @@
 
 基于 [Wails v2](https://wails.io)（Go + WebView2），无 Node 依赖，release 单文件约 13MB（已内嵌 WebView2 引导器，极少数没有 WebView2 运行时的 Win10 机器上首次运行会自动安装）。
 
-直接双击 `release\ClipGlot_v1.4.0.exe` 即可使用。
+直接双击 `release\ClipGlot_v1.5.0.exe` 即可使用。
 
 ![ClipGlot 主界面](docs/screenshot-main.png)
 
@@ -26,6 +26,10 @@
 - **语言自动检测**：基于 Unicode 区间识别中/日/韩/俄/阿拉伯/泰/拉丁语系，源语言无需选择
 - **目标语言下拉选择**：简中、繁中、英、日、韩、法、德、西、俄、葡、意、阿拉伯、泰、越南
 - **一键复制**：每个结果卡片右上角有复制按钮
+- **常用短语**：把反复要粘贴的句子（提示词、签名、常用配置等）每条绑一个全局组合键，
+  按下即把内容直接粘贴到当前光标处，不用先复制再粘贴；也可以从托盘右键菜单点选。
+  条目名称、内容和组合键都在设置里维护，条数上限 32；不填组合键的条目只出现在托盘菜单里。
+  组合键被其他程序占用时会明确提示，而不是静默失灵。
 - **多 AI 并行翻译**：已启用的服务同时请求，结果分卡片流式显示，方便对比
 - **支持的服务**（均为 OpenAI 兼容接口，服务地址可在设置中修改）：
   - **阿里云百炼**，默认模型 `qwen-mt-flash`（翻译专用模型，自动按官方要求传
@@ -44,7 +48,10 @@
 3. 左侧输入内容即可翻译；每个结果卡片有独立的 **复制** 按钮
 4. 在浏览器、PDF、聊天窗口等任意程序里划选文字，`Ctrl+C` 复制后半秒内再按一次
    `Ctrl+C`，或按 `Ctrl+Shift+Space`，即可划词翻译
-5. 不用时点 ✕ 或最小化，ClipGlot 缩到系统托盘继续待命；点击托盘图标唤起，右键 → 退出才真正关闭
+5. 设置 → **常用短语**：点 **＋ 添加**，填名称和内容，点快捷键框录制组合键
+   （按 `Backspace` 清空，留空则只出现在托盘右键菜单）。之后在任何程序的输入框里
+   按这个组合键，内容会直接粘贴到光标处
+6. 不用时点 ✕ 或最小化，ClipGlot 缩到系统托盘继续待命；点击托盘图标唤起，右键 → 退出才真正关闭
 
 API Key 申请入口（按设置中的排列顺序）：
 
@@ -72,7 +79,7 @@ build.bat      # 一键构建发布版
 构建流程：
 
 - `wails build` 产物固定输出到 **`build\bin\ClipGlot.exe`**
-- `build.bat` 在此基础上额外复制一份带版本号的发布版到 **`release\ClipGlot_v1.4.0.exe`**
+- `build.bat` 在此基础上额外复制一份带版本号的发布版到 **`release\ClipGlot_v1.5.0.exe`**
 - 版本号唯一来源是 [wails.json](wails.json) 的 `info.productVersion`，改版本只需改这一处，文件名与 exe 属性会同步变化
 
 > ⚠️ 不要用裸 `go build` 出发布版：缺少 `production` 构建标签时，程序启动只会弹一个
@@ -83,9 +90,10 @@ build.bat      # 一键构建发布版
 ```
 main.go             程序入口、窗口与单实例配置
 app.go              绑定到前端的方法：配置读写、并发翻译调度、事件推送
-config.go           配置定义与 %AppData% 读写
+config.go           配置定义（含常用短语条目）与 %AppData% 读写
 llm.go              OpenAI 兼容 /chat/completions 流式客户端（SSE）；qwen-mt 翻译专用协议
-tray_windows.go     划词翻译与托盘：全局热键注册、模拟 Ctrl+C、剪贴板读取、系统托盘
+tray_windows.go     划词翻译、常用短语与托盘：全局热键注册、模拟 Ctrl+C / Ctrl+V、
+                    剪贴板读写、系统托盘
 frontend/dist       界面（原生 HTML/CSS/JS，无框架）
 build/              构建资源（应用图标 appicon.png、Windows 清单等）；build/bin 为编译产物
 release/            发布版（ClipGlot_v版本号.exe，由 build.bat 生成）

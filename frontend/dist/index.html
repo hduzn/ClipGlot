@@ -41,7 +41,7 @@
 	<div id="settingsOverlay" class="overlay" hidden>
 		<div class="modal">
 			<div class="modal-head">
-				<span>设置 · AI 服务</span>
+				<span>设置</span>
 				<button id="btnCloseSettings" class="icon-btn" title="关闭">✕</button>
 			</div>
 			<div class="modal-body" id="settingsBody">
@@ -51,7 +51,12 @@
 					<button id="btnAddCustom" class="ghost-btn">＋ 添加</button>
 				</div>
 				<div id="customList"></div>
-				<div class="section-title"><span>划词翻译</span></div>
+				<div class="section-title">
+					<span>常用短语</span>
+					<button id="btnAddSnippet" class="ghost-btn">＋ 添加</button>
+				</div>
+				<div id="snippetList"></div>
+				<div class="tip">每条短语绑一个组合键，按下即把内容粘贴到当前光标处；不填组合键时只出现在托盘右键菜单里。注册失败（如被其他程序占用）会在保存时提示。</div>
 				<div class="hotkey-row">
 					<label class="switch" title="启用划词翻译">
 						<input type="checkbox" id="hotkeyOn" checked>

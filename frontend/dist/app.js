@@ -126,6 +126,17 @@ function bindEvents() {
 	});
 	$("#hotkeyBox").addEventListener("click", startHotkeyCapture);
 	document.addEventListener("keydown", hotkeyCaptureKeydown, true);
+	$("#btnAddSnippet").addEventListener("click", () => {
+		editCfg.snippets = editCfg.snippets || [];
+		if (editCfg.snippets.length >= 32) {
+			$("#settingsMsg").textContent = "常用短语最多 32 条";
+			return;
+		}
+		const el = addSnippetRow({
+			id: "snip-" + Date.now(), name: "", text: "", hotkey: "", enabled: true,
+		});
+		el.querySelector(".sn-name").focus();
+	});
 	$("#btnAddCustom").addEventListener("click", () => {
 		const el = addCustomRow({
 			id: "custom-" + Date.now(), type: "custom",
@@ -332,6 +343,7 @@ function langEn(code) {
 function openSettings() {
 	editCfg = JSON.parse(JSON.stringify(cfg));
 	renderSettings();
+	renderSnippets();
 	$("#hotkeyOn").checked = !editCfg.hotkeyOff;
 	$("#hotkeyBox").textContent = editCfg.hotkey || "Ctrl+Shift+Space";
 	$("#hotkeyBox").classList.toggle("off", !!editCfg.hotkeyOff);
@@ -453,9 +465,22 @@ function collectSettings() {
 			enabled: q(".p-enabled").checked,
 		});
 	});
+	const snippets = [];
+	document.querySelectorAll("#snippetList .snippet").forEach((el) => {
+		snippets.push({
+			id: el.dataset.id,
+			name: el.querySelector(".sn-name").value.trim(),
+			text: el.querySelector(".sn-text").value,
+			hotkey: (el.querySelector(".sn-hotkey").dataset.hotkey || "").trim(),
+			enabled: el.querySelector(".sn-enabled").checked,
+		});
+	});
+
 	return {
 		providers,
+		snippets,
 		targetLang: cfg.targetLang || "en",
+		theme: cfg.theme || "system",
 		hotkey: editCfg.hotkey || "Ctrl+Shift+Space",
 		hotkeyOff: !$("#hotkeyOn").checked,
 		doubleCopyOff: !$("#doubleCopyOn").checked,
@@ -472,6 +497,13 @@ async function saveSettings() {
 		return;
 	}
 	cfg = await window.go.main.App.SaveConfig(payload);
+	// 热键注册发生在后端 watcher 线程，是异步的：留一点时间再取冲突提示。
+	// 有冲突就留在弹窗里说明（配置已保存，但某个快捷键没生效）
+	const warn = await waitHotkeyWarnings();
+	if (warn) {
+		$("#settingsMsg").textContent = "已保存，但" + warn;
+		return;
+	}
 	closeSettings();
 	if ($("#source").value.trim()) doTranslate();
 	else renderEmptyHint();
@@ -490,6 +522,10 @@ function startHotkeyCapture() {
 }
 
 function hotkeyCaptureKeydown(e) {
+	if (snCapture) {
+		snCaptureKeydown(e);
+		return;
+	}
 	if (!capturingHotkey) return;
 	// 独占按键：不触发页面快捷键（如 Esc 关设置）、不输入字符
 	e.preventDefault();
@@ -533,4 +569,103 @@ function comboFromEvent(e) {
 	].filter(Boolean);
 	if (!mods.length) return null; // 必须带修饰键，避免劫持普通输入
 	return [...mods, key].join("+");
+}
+
+/* ── 常用短语 ─────────────────────────── */
+
+// snCapture 是正在录制的短语快捷键框：{ el, restore }。
+// 与全局划词快捷键的 capturingHotkey 分开，互不干扰。
+let snCapture = null;
+
+function renderSnippets() {
+	editCfg.snippets = editCfg.snippets || [];
+	$("#snippetList").innerHTML = editCfg.snippets.length
+		? editCfg.snippets.map(snippetRowHTML).join("")
+		: `<div class="custom-empty">还没有常用短语</div>`;
+	document.querySelectorAll("#snippetList .snippet").forEach(bindSnippetRow);
+}
+
+function snippetRowHTML(sn) {
+	const hk = (sn.hotkey || "").trim();
+	return `
+	<div class="snippet ${sn.enabled ? "on" : ""}" data-id="${esc(sn.id)}">
+		<div class="snippet-head">
+			<input type="text" class="sn-name" placeholder="名称，如：设计风格" value="${esc(sn.name)}">
+			<button type="button" class="sn-hotkey hotkey-box ${hk ? "" : "empty"}" data-hotkey="${esc(hk)}" title="点击后按下组合键；Backspace 清空">${esc(hk || "（未设置）")}</button>
+			<label class="switch" title="启用">
+				<input type="checkbox" class="sn-enabled" ${sn.enabled ? "checked" : ""}>
+				<span class="slider"></span>
+			</label>
+			<button class="p-delete" title="删除">🗑</button>
+		</div>
+		<textarea class="sn-text" rows="2" placeholder="要粘贴的内容" spellcheck="false">${esc(sn.text)}</textarea>
+	</div>`;
+}
+
+function addSnippetRow(sn) {
+	const list = $("#snippetList");
+	const empty = list.querySelector(".custom-empty");
+	if (empty) empty.remove();
+	list.insertAdjacentHTML("beforeend", snippetRowHTML(sn));
+	const el = list.querySelector(`.snippet[data-id="${CSS.escape(sn.id)}"]`);
+	bindSnippetRow(el);
+	return el;
+}
+
+function bindSnippetRow(el) {
+	const cb = el.querySelector(".sn-enabled");
+	cb.addEventListener("change", () => el.classList.toggle("on", cb.checked));
+	el.querySelector(".sn-hotkey").addEventListener("click", (e) =>
+		startSnippetCapture(e.currentTarget));
+	el.querySelector(".p-delete").addEventListener("click", () => el.remove());
+}
+
+function startSnippetCapture(el) {
+	if (snCapture) return;
+	snCapture = { el, restore: el.textContent };
+	el.classList.add("capturing");
+	el.textContent = "按下组合键…（Esc 取消）";
+}
+
+function snCaptureKeydown(e) {
+	e.preventDefault();
+	e.stopImmediatePropagation();
+	if (e.key === "Escape") {
+		finishSnippetCapture(null);
+		return;
+	}
+	// 不按修饰键的退格/删除 = 清空该条快捷键（之后只走托盘菜单）
+	const bare = !e.ctrlKey && !e.altKey && !e.shiftKey && !e.metaKey;
+	if (bare && (e.code === "Backspace" || e.code === "Delete")) {
+		finishSnippetCapture("");
+		return;
+	}
+	const combo = comboFromEvent(e);
+	if (!combo) return; // 只按了修饰键，等主键
+	finishSnippetCapture(combo);
+}
+
+function finishSnippetCapture(combo) {
+	if (!snCapture) return;
+	const { el, restore } = snCapture;
+	snCapture = null;
+	el.classList.remove("capturing");
+	if (combo === null) { // Esc 取消
+		el.textContent = restore;
+		return;
+	}
+	el.dataset.hotkey = combo;
+	el.textContent = combo || "（未设置）";
+	el.classList.toggle("empty", !combo);
+}
+
+// waitHotkeyWarnings 等后端按新配置注册完热键后取回失败说明；
+// 注册是异步的，所以最多轮询 300ms，取不到就当成功。
+async function waitHotkeyWarnings() {
+	for (let i = 0; i < 6; i++) {
+		const w = await window.go.main.App.HotkeyWarnings();
+		if (w) return w;
+		await new Promise((r) => setTimeout(r, 50));
+	}
+	return "";
 }

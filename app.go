@@ -41,6 +41,10 @@ type App struct {
 	dcCtrlDown    bool
 	dcCDown       bool
 	dcLastC       time.Time
+
+	// hotkeyWarn 保存最近一次热键注册的失败说明（"组合键已被占用"等）。
+	// 注册发生在 watcher 线程，因此用指针原子量传递，设置面板保存后读取。
+	hotkeyWarn atomic.Pointer[string]
 }
 
 func NewApp() *App { return &App{} }
@@ -52,7 +56,7 @@ func (a *App) startup(ctx context.Context) {
 }
 
 // showWindow 唤起主窗口：从托盘/最小化状态恢复并强制置前
-//（Windows 下 forceForeground 绕过前台锁定，见 tray_windows.go）。
+// （Windows 下 forceForeground 绕过前台锁定，见 tray_windows.go）。
 func (a *App) showWindow() {
 	runtime.WindowUnminimise(a.ctx)
 	runtime.WindowShow(a.ctx)
@@ -87,16 +91,43 @@ func (a *App) SaveConfig(cfg Config) (*Config, error) {
 		clean = append(clean, p)
 	}
 	cfg.Providers = clean
+
+	cleanSnippets := make([]Snippet, 0, len(cfg.Snippets))
+	for _, sn := range cfg.Snippets {
+		// 内容不做 TrimSpace：用户可能有意保留首尾换行
+		sn.Name = strings.TrimSpace(sn.Name)
+		sn.Hotkey = strings.TrimSpace(sn.Hotkey)
+		if sn.ID == "" {
+			sn.ID = newSnippetID()
+		}
+		cleanSnippets = append(cleanSnippets, sn)
+	}
+	if len(cleanSnippets) > maxSnippets {
+		cleanSnippets = cleanSnippets[:maxSnippets]
+	}
+	cfg.Snippets = cleanSnippets
+
 	if cfg.TargetLang == "" {
 		cfg.TargetLang = "en"
 	}
 	cfg.Hotkey = strings.TrimSpace(cfg.Hotkey)
+	a.mu.Lock()
 	a.config = &cfg
-	a.applyHotkey() // 快捷键可能被修改，按新配置重新注册
+	a.mu.Unlock()
+	a.applyHotkey() // 快捷键可能被修改，按新配置重新注册（含每条短语）
 	if err := saveConfigFile(a.config); err != nil {
 		return a.config, err
 	}
 	return a.config, nil
+}
+
+// HotkeyWarnings 返回最近一次热键注册失败的说明，空串表示全部注册成功。
+// 注册在 watcher 线程异步进行，调用方（设置面板）应在保存后稍等再读。
+func (a *App) HotkeyWarnings() string {
+	if p := a.hotkeyWarn.Load(); p != nil {
+		return *p
+	}
+	return ""
 }
 
 // SetTargetLang 记住目标语言选择。

@@ -7,7 +7,7 @@
 	"frontend:dir": "frontend",
 	"info": {
 		"productName": "ClipGlot",
-		"productVersion": "1.4.0",
+		"productVersion": "1.5.0",
 		"copyright": "Copyright © 2026",
 		"comments": "轻巧的 AI 桌面翻译工具"
 	}
