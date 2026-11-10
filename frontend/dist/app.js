@@ -116,6 +116,8 @@ function bindEvents() {
 	});
 
 	$("#btnSettings").addEventListener("click", openSettings);
+	document.querySelectorAll("#settingsTabs .tab-btn").forEach((btn) =>
+		btn.addEventListener("click", () => switchSettingsTab(btn.dataset.tab)));
 	$("#btnTheme").addEventListener("click", cycleTheme);
 	themeMQ.addEventListener("change", applyTheme);
 	$("#btnCloseSettings").addEventListener("click", closeSettings);
@@ -128,7 +130,7 @@ function bindEvents() {
 	document.addEventListener("keydown", hotkeyCaptureKeydown, true);
 	$("#btnAddSnippet").addEventListener("click", () => {
 		editCfg.snippets = editCfg.snippets || [];
-		if (editCfg.snippets.length >= 32) {
+		if (document.querySelectorAll("#snippetList .snippet").length >= 32) {
 			$("#settingsMsg").textContent = "常用短语最多 32 条";
 			return;
 		}
@@ -137,6 +139,8 @@ function bindEvents() {
 		});
 		el.querySelector(".sn-name").focus();
 	});
+	$("#btnSnippetCollapse").addEventListener("click", () => setAllSnippetsCollapsed(true));
+	$("#btnSnippetExpand").addEventListener("click", () => setAllSnippetsCollapsed(false));
 	$("#btnAddCustom").addEventListener("click", () => {
 		const el = addCustomRow({
 			id: "custom-" + Date.now(), type: "custom",
@@ -342,6 +346,7 @@ function langEn(code) {
 
 function openSettings() {
 	editCfg = JSON.parse(JSON.stringify(cfg));
+	switchSettingsTab("tabApi");
 	renderSettings();
 	renderSnippets();
 	$("#hotkeyOn").checked = !editCfg.hotkeyOff;
@@ -355,6 +360,16 @@ function openSettings() {
 function closeSettings() {
 	$("#settingsOverlay").hidden = true;
 	editCfg = null;
+}
+
+// switchSettingsTab 切换设置弹窗的标签页；两个面板都在 DOM 里（只是隐藏），
+// 所以 collectSettings 仍能一次性收集全部内容，与切换无关。
+function switchSettingsTab(id) {
+	document.querySelectorAll("#settingsTabs .tab-btn").forEach((b) =>
+		b.classList.toggle("active", b.dataset.tab === id));
+	document.querySelectorAll("#settingsBody .tab-panel").forEach((p) => {
+		p.hidden = p.id !== id;
+	});
 }
 
 function renderSettings() {
@@ -583,13 +598,16 @@ function renderSnippets() {
 		? editCfg.snippets.map(snippetRowHTML).join("")
 		: `<div class="custom-empty">还没有常用短语</div>`;
 	document.querySelectorAll("#snippetList .snippet").forEach(bindSnippetRow);
+	updateSnippetCount();
 }
 
-function snippetRowHTML(sn) {
+function snippetRowHTML(sn, i = 0) {
 	const hk = (sn.hotkey || "").trim();
 	return `
 	<div class="snippet ${sn.enabled ? "on" : ""}" data-id="${esc(sn.id)}">
 		<div class="snippet-head">
+			<button type="button" class="sn-fold" title="折叠/展开这条">▾</button>
+			<span class="sn-index">${i + 1}</span>
 			<input type="text" class="sn-name" placeholder="名称，如：设计风格" value="${esc(sn.name)}">
 			<button type="button" class="sn-hotkey hotkey-box ${hk ? "" : "empty"}" data-hotkey="${esc(hk)}" title="点击后按下组合键；Backspace 清空">${esc(hk || "（未设置）")}</button>
 			<label class="switch" title="启用">
@@ -606,18 +624,47 @@ function addSnippetRow(sn) {
 	const list = $("#snippetList");
 	const empty = list.querySelector(".custom-empty");
 	if (empty) empty.remove();
-	list.insertAdjacentHTML("beforeend", snippetRowHTML(sn));
+	list.insertAdjacentHTML("beforeend", snippetRowHTML(sn, list.querySelectorAll(".snippet").length));
 	const el = list.querySelector(`.snippet[data-id="${CSS.escape(sn.id)}"]`);
 	bindSnippetRow(el);
+	updateSnippetCount();
 	return el;
 }
 
 function bindSnippetRow(el) {
 	const cb = el.querySelector(".sn-enabled");
 	cb.addEventListener("change", () => el.classList.toggle("on", cb.checked));
+	el.querySelector(".sn-fold").addEventListener("click", () => {
+		el.classList.toggle("collapsed");
+		el.querySelector(".sn-fold").textContent = el.classList.contains("collapsed") ? "▸" : "▾";
+	});
 	el.querySelector(".sn-hotkey").addEventListener("click", (e) =>
 		startSnippetCapture(e.currentTarget));
-	el.querySelector(".p-delete").addEventListener("click", () => el.remove());
+	el.querySelector(".p-delete").addEventListener("click", () => {
+		el.remove();
+		renumberSnippets();
+	});
+}
+
+// renumberSnippets 删除/增删行后重排序号并刷新计数
+function renumberSnippets() {
+	document.querySelectorAll("#snippetList .snippet").forEach((el, i) => {
+		el.querySelector(".sn-index").textContent = i + 1;
+	});
+	updateSnippetCount();
+}
+
+function updateSnippetCount() {
+	const n = document.querySelectorAll("#snippetList .snippet").length;
+	$("#snippetCount").textContent = `（${n}/32）`;
+}
+
+// setAllSnippetsCollapsed 全部折叠（true）或全部展开（false）
+function setAllSnippetsCollapsed(collapsed) {
+	document.querySelectorAll("#snippetList .snippet").forEach((el) => {
+		el.classList.toggle("collapsed", collapsed);
+		el.querySelector(".sn-fold").textContent = collapsed ? "▸" : "▾";
+	});
 }
 
 function startSnippetCapture(el) {

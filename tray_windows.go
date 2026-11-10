@@ -25,8 +25,9 @@ const (
 	wmReHotkey  = 0x8000 + 1 // WM_APP+1：按新配置重注册热键
 	wmTrayIcon  = 0x8000 + 2 // NOTIFYICONDATA.uCallbackMessage
 	wmCommand   = 0x0111
-	trayCmdShow = 1
-	trayCmdQuit = 2
+	trayCmdShow      = 1
+	trayCmdQuit      = 2
+	trayCmdAutoStart = 3
 
 	whKeyboardLl  = 13 // WH_KEYBOARD_LL：双击 Ctrl+C 手势用的低级键盘钩子
 	wmKeyDown     = 0x0100
@@ -53,6 +54,7 @@ const (
 	snippetMenuMax    = 24 // 托盘菜单里显示名称的最大字数
 
 	mfString    = 0
+	mfChecked   = 0x8
 	mfGrayed    = 0x1
 	mfSeparator = 0x800
 	mfPopup     = 0x10
@@ -100,6 +102,8 @@ var (
 	procExtractIconExW        = shell32.NewProc("ExtractIconExW")
 	procCreatePopupMenu       = user32.NewProc("CreatePopupMenu")
 	procAppendMenuW           = user32.NewProc("AppendMenuW")
+	procCheckMenuItem         = user32.NewProc("CheckMenuItem")
+	procMessageBoxW           = user32.NewProc("MessageBoxW")
 	procTrackPopupMenuEx      = user32.NewProc("TrackPopupMenuEx")
 	procGetCursorPos          = user32.NewProc("GetCursorPos")
 	procSetForegroundWin      = user32.NewProc("SetForegroundWindow")
@@ -244,7 +248,8 @@ func (a *App) startHotkeyWatcher() {
 		taskbarCreatedMsg.Store(uint32(v))
 	}
 
-	a.reghotkey() // 注册全部热键，并按当前短语列表建好托盘菜单
+	syncAutoStartPath() // exe 挪过位置时静默刷新开机启动注册表里的路径
+	a.reghotkey()       // 注册全部热键，并按当前短语列表建好托盘菜单
 	a.addTrayIcon(hwnd, nimAdd)
 	a.installDoubleCopyHook(hInstance)
 	go a.hideOnMinimise()
@@ -338,7 +343,7 @@ func (a *App) rebuildTrayMenu(snippets []Snippet) {
 		procDestroyMenu.Call(a.trayMenu)
 		a.trayMenu = 0
 	}
-	a.trayMenu = createTrayMenu(snippets)
+	a.trayMenu = createTrayMenu(snippets, autostartEnabled())
 }
 
 // installDoubleCopyHook 装低级键盘钩子，识别“双击 Ctrl+C”手势。
@@ -462,13 +467,20 @@ func (a *App) addTrayIcon(hwnd uintptr, op uint32) {
 	procShellNotifyIcon.Call(uintptr(op), uintptr(unsafe.Pointer(&nid)))
 }
 
-// createTrayMenu 建托盘右键菜单：显示主窗口 / 常用短语（子菜单）/ 退出。
+// createTrayMenu 建托盘右键菜单：显示主窗口 / 开机启动（勾选）/ 常用短语（子菜单）/ 退出。
 // 没配任何短语时不插这一级，避免出现空菜单。
-func createTrayMenu(snippets []Snippet) uintptr {
+func createTrayMenu(snippets []Snippet, autoStart bool) uintptr {
 	m, _, _ := procCreatePopupMenu.Call()
 	showText, _ := syscall.UTF16PtrFromString("显示主窗口")
+	autoText, _ := syscall.UTF16PtrFromString("开机启动")
+	snipText, _ := syscall.UTF16PtrFromString("常用短语")
 	quitText, _ := syscall.UTF16PtrFromString("退出")
 	procAppendMenuW.Call(m, mfString, trayCmdShow, uintptr(unsafe.Pointer(showText)))
+	autoFlags := uintptr(mfString)
+	if autoStart {
+		autoFlags |= mfChecked
+	}
+	procAppendMenuW.Call(m, autoFlags, trayCmdAutoStart, uintptr(unsafe.Pointer(autoText)))
 	procAppendMenuW.Call(m, mfSeparator, 0, 0)
 
 	if len(snippets) > 0 {
@@ -488,7 +500,9 @@ func createTrayMenu(snippets []Snippet) uintptr {
 			ptr, _ := syscall.UTF16PtrFromString(label)
 			procAppendMenuW.Call(sub, flags, uintptr(snippetCmdBase+i), uintptr(unsafe.Pointer(ptr)))
 		}
-		procAppendMenuW.Call(m, mfPopup, sub, 0)
+		// MF_POPUP 的最后一个参数是子菜单标题：必须传文字，传空会渲染成
+		// 一个没有字的空白行，看起来像多了一条分隔线
+		procAppendMenuW.Call(m, mfPopup, sub, uintptr(unsafe.Pointer(snipText)))
 		procAppendMenuW.Call(m, mfSeparator, 0, 0)
 	}
 
@@ -512,11 +526,35 @@ func (a *App) showTrayMenu(hwnd uintptr) {
 	switch {
 	case id == trayCmdShow:
 		a.showWindow()
+	case id == trayCmdAutoStart:
+		a.toggleAutoStart()
 	case id == trayCmdQuit:
 		a.quit()
 	case id >= snippetCmdBase && id < snippetCmdBase+maxSnippets:
 		// 子菜单项：TPM_RETURNCMD 直接返回它的命令 id
 		go a.onSnippet(int(id - snippetCmdBase))
+	}
+}
+
+// toggleAutoStart 切换「开机启动」勾选：注册表写/删成功后用 CheckMenuItem
+// 就地翻转菜单勾选状态，不重建菜单句柄；失败弹窗说明而不是静默失灵。
+func (a *App) toggleAutoStart() {
+	on := !autostartEnabled()
+	if err := setAutoStart(on); err != nil {
+		if hwnd := a.hotkeyWnd.Load(); hwnd != 0 {
+			text, _ := syscall.UTF16PtrFromString("设置开机启动失败：\n" + err.Error())
+			title, _ := syscall.UTF16PtrFromString("ClipGlot")
+			procMessageBoxW.Call(hwnd, uintptr(unsafe.Pointer(text)),
+				uintptr(unsafe.Pointer(title)), 0)
+		}
+		return
+	}
+	if a.trayMenu != 0 {
+		flag := uintptr(0) // MF_UNCHECKED
+		if on {
+			flag = mfChecked
+		}
+		procCheckMenuItem.Call(a.trayMenu, trayCmdAutoStart, flag)
 	}
 }
 

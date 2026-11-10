@@ -272,6 +272,32 @@ select, .field input, .sn-name {
 	padding: 14px 18px;
 }
 .settings-error { color: var(--danger); font-size: 13px; margin-right: auto; }
+.tab-bar {
+	display: flex;
+	gap: 2px;
+	border-bottom: 1px solid var(--border);
+	margin-top: 2px;
+	padding: 0 18px; /* 与 modal-body 左右对齐；标签栏在滚动区外，内容滚动时保持固定 */
+	flex-shrink: 0;
+}
+.tab-btn {
+	background: transparent;
+	border: 0;
+	color: var(--muted);
+	font: inherit;
+	font-size: 13px;
+	padding: 8px 14px;
+	cursor: pointer;
+	border-bottom: 2px solid transparent;
+	margin-bottom: -1px;
+}
+.tab-btn:hover { color: var(--text); }
+.tab-btn.active {
+	color: var(--accent);
+	font-weight: 600;
+	border-bottom-color: var(--accent);
+}
+.tab-panel { padding-bottom: 12px; }
 .section-title {
 	display: flex;
 	align-items: center;
@@ -279,6 +305,7 @@ select, .field input, .sn-name {
 	margin: 18px 0 10px;
 	font-weight: 600;
 }
+.tab-panel .section-title:first-child { margin-top: 12px; }
 .tip { color: var(--muted); font-size: 12px; margin: 4px 0 14px; }
 .custom-empty { color: var(--muted); font-size: 13px; padding: 10px 2px; }
 
@@ -362,6 +389,26 @@ select, .field input, .sn-name {
 .sn-name { flex: 1; min-width: 0; }
 .snippet .sn-hotkey { min-width: 108px; padding: 6px 10px; font-size: 13px; }
 .sn-hotkey.empty { color: var(--muted); }
+/* 序号 + 折叠箭头 */
+.count-badge { color: var(--muted); font-weight: 400; font-size: 12px; margin-left: 6px; }
+.title-actions { display: flex; align-items: center; gap: 6px; }
+.sn-index { color: var(--muted); font-size: 12px; min-width: 16px; text-align: right; flex-shrink: 0; }
+.sn-fold {
+	background: transparent;
+	border: 0;
+	cursor: pointer;
+	color: var(--muted);
+	width: 22px;
+	height: 22px;
+	padding: 0;
+	font-size: 11px;
+	line-height: 1;
+	border-radius: 6px;
+	flex-shrink: 0;
+}
+.sn-fold:hover { background: var(--accent-soft); color: var(--text); }
+.snippet.collapsed .sn-text { display: none; }
+.snippet.collapsed { padding-bottom: 9px; }
 .sn-text {
 	display: block;
 	width: 100%;

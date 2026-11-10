@@ -44,36 +44,52 @@
 				<span>设置</span>
 				<button id="btnCloseSettings" class="icon-btn" title="关闭">✕</button>
 			</div>
+			<div class="tab-bar" id="settingsTabs">
+				<button type="button" class="tab-btn active" data-tab="tabApi">翻译设置</button>
+				<button type="button" class="tab-btn" data-tab="tabSnippets">常用短语</button>
+			</div>
 			<div class="modal-body" id="settingsBody">
-				<div id="presetList"></div>
-				<div class="section-title">
-					<span>自定义 OpenAI 兼容服务</span>
-					<button id="btnAddCustom" class="ghost-btn">＋ 添加</button>
+				<div id="tabApi" class="tab-panel">
+					<div class="section-title"><span>快捷键</span></div>
+					<div class="hotkey-row">
+						<label class="switch" title="启用划词翻译">
+							<input type="checkbox" id="hotkeyOn">
+							<span class="slider"></span>
+						</label>
+						<button id="hotkeyBox" class="hotkey-box" type="button" title="点击后按下新的组合键"></button>
+						<span class="hotkey-tip">在任意程序中划选文字后按此快捷键，自动复制所选内容并翻译</span>
+					</div>
+					<div class="hotkey-row">
+						<label class="switch" title="启用双击 Ctrl+C 划词翻译">
+							<input type="checkbox" id="doubleCopyOn" checked>
+							<span class="slider"></span>
+						</label>
+						<span class="hotkey-box static">双击 Ctrl+C</span>
+						<span class="hotkey-tip">划选文字后照常 Ctrl+C 复制，半秒内再按一次 Ctrl+C 立即翻译</span>
+					</div>
+					<div class="tip">组合键为系统级占用；含 Ctrl+Shift 的组合按下瞬间会触发系统“切换输入法”，含 Alt 的组合易致修饰键状态错乱，均不建议。</div>
+
+					<div class="section-title"><span>API Key</span></div>
+					<div id="presetList"></div>
+					<div class="section-title">
+						<span>自定义 OpenAI 兼容服务</span>
+						<button id="btnAddCustom" class="ghost-btn">＋ 添加</button>
+					</div>
+					<div id="customList"></div>
 				</div>
-				<div id="customList"></div>
-				<div class="section-title">
-					<span>常用短语</span>
-					<button id="btnAddSnippet" class="ghost-btn">＋ 添加</button>
+
+				<div id="tabSnippets" class="tab-panel" hidden>
+					<div class="section-title">
+						<span>常用短语<span id="snippetCount" class="count-badge"></span></span>
+						<span class="title-actions">
+							<button id="btnSnippetCollapse" class="ghost-btn" title="收起全部内容，只看名称和快捷键">全部折叠</button>
+							<button id="btnSnippetExpand" class="ghost-btn">全部展开</button>
+							<button id="btnAddSnippet" class="ghost-btn">＋ 添加</button>
+						</span>
+					</div>
+					<div id="snippetList"></div>
+					<div class="tip">每条短语绑一个组合键，按下即把内容粘贴到当前光标处；不填组合键时只出现在托盘右键菜单里。注册失败（如被其他程序占用）会在保存时提示。</div>
 				</div>
-				<div id="snippetList"></div>
-				<div class="tip">每条短语绑一个组合键，按下即把内容粘贴到当前光标处；不填组合键时只出现在托盘右键菜单里。注册失败（如被其他程序占用）会在保存时提示。</div>
-				<div class="hotkey-row">
-					<label class="switch" title="启用划词翻译">
-						<input type="checkbox" id="hotkeyOn" checked>
-						<span class="slider"></span>
-					</label>
-					<button id="hotkeyBox" class="hotkey-box" type="button" title="点击后按下新的组合键"></button>
-					<span class="hotkey-tip">在任意程序中划选文字后按此快捷键，自动复制所选内容并翻译</span>
-				</div>
-				<div class="hotkey-row">
-					<label class="switch" title="启用双击 Ctrl+C 划词翻译">
-						<input type="checkbox" id="doubleCopyOn" checked>
-						<span class="slider"></span>
-					</label>
-					<span class="hotkey-box static">双击 Ctrl+C</span>
-					<span class="hotkey-tip">划选文字后照常 Ctrl+C 复制，半秒内再按一次 Ctrl+C 立即翻译</span>
-				</div>
-				<div class="tip">组合键为系统级占用；含 Ctrl+Shift 的组合按下瞬间会触发系统“切换输入法”，含 Alt 的组合易致修饰键状态错乱，均不建议。</div>
 			</div>
 			<div class="modal-foot">
 				<span id="settingsMsg" class="settings-error"></span>

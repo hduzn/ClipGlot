@@ -56,6 +56,7 @@ func DefaultConfig() *Config {
 		TargetLang: "en",
 		Theme:      "system",
 		Hotkey:     hotkeyDefault,
+		HotkeyOff:  true, // 划词全局组合键默认停用，避免一装好就占用系统键；双击 Ctrl+C 仍默认开启
 		Providers: []ProviderConfig{
 			{ID: "bailian", Type: "preset", Name: "阿里云百炼", BaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1", Model: "qwen-mt-flash"},
 			{ID: "deepseek", Type: "preset", Name: "DeepSeek", BaseURL: "https://api.deepseek.com/v1", Model: "deepseek-flash"},
